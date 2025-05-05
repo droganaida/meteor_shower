@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Meteor Shader | SilverCord-VR</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="alternate icon" type="image/png" href="favicon.png">
+    <style>
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background-color: black;
+            color: white;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            position: absolute;
+            width: 100vw;
+            height: 100vh;
+        }
+        .info {
+            position: fixed;
+            width: 100%;
+            text-align: center;
+            background-color: rgba(255, 255, 255, 0.05);
+            color: #fff;
+            padding: 10px;
+            z-index: 1;
+            font-size: 14px;
+        }
+        #footer {
+            bottom: 0;
+        }
+    </style>
+</head>
+<body>
+<div id="footer" class="info">
+    <a href="https://silvercord-vr.com/games/" target="_blank" style="color: white; text-decoration: none;">
+        © Aida Drogan | SilverCord-VR Studio
+    </a>
+</div>
+
+<canvas id="glcanvas"></canvas>
+
+<script id="fragmentShader" type="x-shader/x-fragment">
+    #define MAX_TRAIL_STEPS 240
+    
+    precision highp float;
+    
+    // --- Uniforms from host application ---
+    uniform vec2 iResolution;
+    uniform float iTime;
+    
+    uniform float MeteorSpawnInterval;
+    uniform float AngleMin;
+    uniform float AngleMax;
+    uniform float MeteorSpeed;
+    uniform float meteorScale;
+    uniform float TailLength;
+    uniform float StarTintIntencity;
+    uniform float MeteorSpawnY_Min;
+    uniform float MeteorSpawnY_Height;
+    uniform float HorizonHeight;
+    uniform int StarCount;
+    
+    uniform vec3 StarColorMain;
+    uniform vec3 StarColor_Add_01;
+    uniform vec3 StarColor_Add_02;
+    uniform vec3 StarColor_Add_03;
+    uniform vec3 HorizonColorBottom;
+    uniform vec3 HorizonColorTop;
+    
+    // --- Mountain shape function ---
+    float terrainFar(float x, float scaleX, float heightY) {
+        float w = 0.0;
+        float a = 1.0;
+        x *= scaleX;
+        w += sin(x * 0.4521) * 4.0;
+        for (int i = 0; i < 5; i++) {
+            x *= 1.43562;
+            x += 6.56248;
+            w += sin(x) * a;
+            a *= 0.5;
+        }
+        return heightY + w * 5.0;
+    }
+    
+    void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+        vec2 uv = fragCoord.xy / iResolution.xy;
+        vec3 color = vec3(0.0);
+    
+        // --- Horizon gradient background ---
+        float horizonFactor = smoothstep(0.0, 1.0, (uv.y - HorizonHeight + 0.5));
+        color += mix(HorizonColorBottom, HorizonColorTop, horizonFactor);
+    
+        // --- Starfield rendering ---
+        for (int i = 0; i < 1000; i++) {
+            if (i >= StarCount) break;
+    
+            float seed = float(i) * 7.234;
+            vec2 starPos = vec2(
+                fract(sin(seed * 12.345) * 43758.5453),
+                fract(sin(seed * 78.233) * 12415.2345)
+            ) * iResolution.xy;
+    
+            float baseBrightness = mix(0.2, 1.0, fract(sin(seed * 91.123) * 65432.789));
+            float pulse = 0.5 + 0.5 * sin(iTime * mix(1.0, 5.0, fract(sin(seed * 42.42))));
+            float brightness = baseBrightness * mix(0.5, 1.0, pulse);
+    
+            float colorRand = fract(starPos.y - starPos.x * 3.0);
+            vec3 baseColor = colorRand < 0.25 ? StarColor_Add_01 :
+                             colorRand < 0.5  ? StarColor_Add_02 :
+                             colorRand < 0.75 ? StarColor_Add_03 :
+                                                StarColorMain;
+    
+            vec3 glowColor = mix(baseColor, StarColorMain, 1.0 - StarTintIntencity) * brightness;
+    
+            float starRadius = 2.5 * meteorScale;
+            float dist = distance(fragCoord.xy, starPos);
+            float intensity = smoothstep(starRadius, 0.0, dist);
+    
+            color += glowColor * intensity;
+        }
+    
+        // --- Meteor shower rendering ---
+        int maxMeteors = 100;
+        float waveDuration = float(maxMeteors - 1) * MeteorSpawnInterval + 2.0 / MeteorSpeed;
+        float localTime = mod(iTime, waveDuration);
+    
+        for (int i = 0; i < maxMeteors; i++) {
+            float spawnTime = float(i) * MeteorSpawnInterval;
+            float timeSinceSpawn = localTime - spawnTime;
+    
+            float seed = float(i);
+            float speedVar = mix(0.75, 1.25, fract(sin(seed * 91.123) * 65432.789));
+            float actualSpeed = MeteorSpeed * speedVar;
+            float flightDuration = 2.0 / actualSpeed;
+    
+            if (timeSinceSpawn < 0.0 || timeSinceSpawn > flightDuration) continue;
+    
+            // Meteor spawn position
+            vec2 spawnPos;
+            spawnPos.x = fract(sin(seed * 12.9898) * 43758.5453);
+            spawnPos.y = MeteorSpawnY_Min + fract(sin(seed * 78.233) * 43758.5453) * MeteorSpawnY_Height;
+    
+            // Direction and angle
+            float angleDeg = mix(AngleMin, AngleMax, fract(sin(seed * 34.345) * 2341.56));
+            float angleRad = radians(angleDeg);
+            vec2 dir = vec2(cos(angleRad), -sin(angleRad)) * 0.16;
+    
+            // Meteor visual properties
+            float randSize = mix(0.8, 2.2, fract(sin(seed * 14.31) * 53762.312));
+            float meteorSize = 0.001 * meteorScale * randSize;
+            float brightness = mix(0.1, 1.0, fract(sin(seed * 77.77) * 93123.342));
+    
+            float colorRand = fract(spawnPos.y - spawnPos.x * 3.0);
+            vec3 baseColor = colorRand < 0.25 ? StarColor_Add_01 :
+                             colorRand < 0.5  ? StarColor_Add_02 :
+                             colorRand < 0.75 ? StarColor_Add_03 :
+                                                StarColorMain;
+    
+            vec3 glowColor = mix(baseColor, StarColorMain, 1.0 - StarTintIntencity) * brightness;
+    
+            // Meteor trail rendering
+            int trailSteps = int(float(MAX_TRAIL_STEPS) * TailLength);
+            float segmentStep = flightDuration * TailLength / float(trailSteps);
+    
+            for (int t = 0; t < MAX_TRAIL_STEPS; t++) {
+                if (t >= trailSteps) break;
+    
+                float trailTime = timeSinceSpawn - float(t) * segmentStep;
+                if (trailTime < 0.0 || trailTime > flightDuration) continue;
+    
+                vec2 pos = spawnPos + dir * trailTime * actualSpeed;
+    
+                float anim = trailTime < 0.25 * flightDuration
+                    ? smoothstep(0.0, 0.25 * flightDuration, trailTime)
+                    : trailTime < 0.75 * flightDuration
+                    ? 1.0
+                    : smoothstep(flightDuration, 0.75 * flightDuration, trailTime);
+    
+                float tailRatio = 1.0 - float(t) / float(trailSteps);
+                float radius = meteorSize * anim * tailRatio;
+    
+                float dist = distance(uv, pos);
+                float radialFalloff = smoothstep(1.0, 0.0, dist / radius);
+                float tailFalloff = smoothstep(0.0, 1.0, tailRatio);
+                float intensity = radialFalloff * pow(tailFalloff, 1.5);
+    
+                color += intensity * glowColor;
+            }
+        }
+    
+        // --- Foreground mountain silhouette ---
+        float farMountain = terrainFar(fragCoord.x, 0.015, 80.0);
+        float farEdge = smoothstep(farMountain, farMountain - 8.0, fragCoord.y);
+        color = mix(vec3(0.0), color, 1.0 - farEdge);
+    
+        fragColor = vec4(color, 1.0);
+    }
+    
+    // Required for Shadertoy compatibility
+    void main() {
+        mainImage(gl_FragColor, gl_FragCoord.xy);
+    }
+</script>    
+
+<script type="module">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.155.0/build/three.module.js';
+import * as dat from 'https://cdn.jsdelivr.net/npm/dat.gui@0.7.9/build/dat.gui.module.js';
+
+const canvas = document.getElementById("glcanvas");
+const renderer = new THREE.WebGLRenderer({ canvas });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setClearColor(0x000000, 1);
+
+const scene = new THREE.Scene();
+const camera = new THREE.Camera();
+camera.position.z = 1;
+
+const uniforms = {
+    iResolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
+    iTime: { value: 0.0 },
+    StarCount: { value: 200 },
+    MeteorSpawnInterval: { value: 0.3 },
+    AngleMin: { value: 110.0 },
+    AngleMax: { value: 130.0 },
+    MeteorSpeed: { value: 0.6 },
+    meteorScale: { value: 1.0 },
+    TailLength: { value: 0.3 },
+    StarTintIntencity: { value: 0.5 },
+    MeteorSpawnY_Min: { value: 0.1 },
+    MeteorSpawnY_Height: { value: 0.8 },
+    HorizonHeight: { value: 0.3 },
+    StarColorMain:     { value: new THREE.Color(1.0, 0.9, 0.8) },
+    StarColor_Add_01:  { value: new THREE.Color(1.0, 0.3, 0.1) },
+    StarColor_Add_02:  { value: new THREE.Color(0.1, 0.8, 1.0) },
+    StarColor_Add_03:  { value: new THREE.Color(0.9, 1.0, 0.3) },
+    HorizonColorBottom: { value: new THREE.Color(0.1, 0.08, 0.17) },
+    HorizonColorTop:    { value: new THREE.Color(0.0, 0.0, 0.0) }
+};
+
+const material = new THREE.ShaderMaterial({
+    fragmentShader: document.getElementById("fragmentShader").textContent,
+    uniforms
+});
+
+const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
+scene.add(quad);
+
+function animate(t) {
+    uniforms.iTime.value = t * 0.001;
+    renderer.render(scene, camera);
+    requestAnimationFrame(animate);
+}
+animate();
+
+const gui = new dat.GUI();
+const settings = {
+    "Meteor Speed": uniforms.MeteorSpeed.value,
+    "Meteor Scale": uniforms.meteorScale.value,
+    "Tail Length": uniforms.TailLength.value,
+    "Star Count": uniforms.StarCount.value,
+    "Star Tint": uniforms.StarTintIntencity.value,
+    "Spawn Interval": uniforms.MeteorSpawnInterval.value,
+    "Angle Min": uniforms.AngleMin.value,
+    "Angle Max": uniforms.AngleMax.value,
+    "Horizon Height": uniforms.HorizonHeight.value,
+    "Color Main": "#fff4cc",
+    "Color Add 1": "#ff4c1a",
+    "Color Add 2": "#1ae3ff",
+    "Color Add 3": "#e3ff4c",
+    "Horizon Bottom": "#080814",
+    "Horizon Top": "#000000"
+};
+
+gui.add(settings, 'Meteor Speed', 0.1, 2).onChange(v => uniforms.MeteorSpeed.value = v);
+gui.add(settings, 'Meteor Scale', 0.5, 2).onChange(v => uniforms.meteorScale.value = v);
+gui.add(settings, 'Tail Length', 0.1, 1).onChange(v => uniforms.TailLength.value = v);
+gui.add(settings, 'Star Count', 0, 1000).step(1).onChange(v => uniforms.StarCount.value = v);
+gui.add(settings, 'Star Tint', 0.0, 1.0).onChange(v => uniforms.StarTintIntencity.value = v);
+gui.add(settings, 'Spawn Interval', 0.1, 5).onChange(v => uniforms.MeteorSpawnInterval.value = v);
+gui.add(settings, 'Angle Min', 0, 180).onChange(v => uniforms.AngleMin.value = v);
+gui.add(settings, 'Angle Max', 0, 180).onChange(v => uniforms.AngleMax.value = v);
+gui.add(settings, 'Horizon Height', 0.0, 1.0).onChange(v => uniforms.HorizonHeight.value = v);
+gui.addColor(settings, 'Color Main').onChange(v => uniforms.StarColorMain.value.set(v));
+gui.addColor(settings, 'Color Add 1').onChange(v => uniforms.StarColor_Add_01.value.set(v));
+gui.addColor(settings, 'Color Add 2').onChange(v => uniforms.StarColor_Add_02.value.set(v));
+gui.addColor(settings, 'Color Add 3').onChange(v => uniforms.StarColor_Add_03.value.set(v));
+gui.addColor(settings, 'Horizon Bottom').onChange(v => uniforms.HorizonColorBottom.value.set(v));
+gui.addColor(settings, 'Horizon Top').onChange(v => uniforms.HorizonColorTop.value.set(v));
+
+window.addEventListener('resize', () => {
+    uniforms.iResolution.value.set(window.innerWidth, window.innerHeight);
+    renderer.setSize(window.innerWidth, window.innerHeight);
+});
+</script>
+</body>
+</html>
